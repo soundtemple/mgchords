@@ -482,7 +482,7 @@
 	chord_slot = (current_scene * 100) + ((current_chord) * 10)
 	current_chord_duration = chord_bank[chord_slot + dur_slot]
 	current_scene_duration = scene_bank[current_scene * sc_size]
-	Log {Playing: Scene: }, current_scene+1, { }, scene_beat_count+1, {/}, (current_scene_duration * HostBeatsPerMeasure), { beats}, { Chord:}, current_chord+1, { }, chord_beat_count+1, {/}, current_chord_duration, { beats}, { Mode: }, mode, { HostBeat: }, HostBeat+1, { SeqA: }, current_patterns[0]+1, { }, patt_beat_counts[0]+1, { SeqB: }, current_patterns[1]+1, { }, patt_beat_counts[1]+1, { SeqC: }, current_patterns[2]+1, { }, patt_beat_counts[2]+1, { SeqD: }, current_patterns[3]+1, { }, patt_beat_counts[3]+1, 
+	Log {Playing: Scene: }, current_scene+1, { }, scene_beat_count+1, {/}, (current_scene_duration * HostBeatsPerMeasure), { beats}, { Chord:}, current_chord+1, { }, chord_beat_count+1, {/}, current_chord_duration, { beats}, { Mode: }, mode, { HostBeat: }, HostBeat+1, { SeqA: }, current_patterns[0]+1, {--}, patt_beat_counts[0]+1, { SeqB: }, current_patterns[1]+1, {--}, patt_beat_counts[1]+1, { SeqC: }, current_patterns[2]+1, {--}, patt_beat_counts[2]+1, { SeqD: }, current_patterns[3]+1, {--}, patt_beat_counts[3]+1, 
 @End
 
 @OnPadDown
