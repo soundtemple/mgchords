@@ -3,7 +3,6 @@
 	ResetNoteStates FALSE // #reset the locker with the value FALSE!
 	mode = 0 //# See @HandleModeChange for modes
 	songmode = 0 //# 0:Playsong 1:SceneLocked 2:ChordLocked
-	pattmode = 0 //# 0:Playsong 1:SceneLocked 2:PatternLocked
 	SetMetroPPQN = 4
 	ppqn = 4 
 	scene_change_requested = -1 //# on pad down has next scene number
@@ -27,11 +26,10 @@
 	Call @TransposeCalcArrays
 	Call @InitKnobVariables //# All knob settings on start
 	Call @SetupChordsScenes
-	Call @SetupSeqModeVars
 	Call @SetupKnobset0
 	Call @SetupLayout
 	Call @ChangeScenePreset //# load preset 0 into scene 0
-	@End
+@End
 
 @InitKnobVariables
 	//# Any knobset knob should have a setting here
@@ -101,7 +99,6 @@
 	col_pattern = 2
 	col_pattern_pending = 3
 	col_sel_chord = 4
-	col_sel_pattern = 4
 	col_rec_chord = 1 //# in record mode
 	col_chord_waiting = 1 //# selected waiting for notes
 	col_pending = 3
@@ -206,25 +203,20 @@
 @OnHostStart
 	//# Start beat count on same beat as host
 	//# In AUM getting HostBeat to start on 0 seems flaky
+	//# Fixed by BramBos in June2020
 	Log HostBar, { : }, HostBeat, { = }, (HostBeatsPerMeasure * HostBar) + HostBeat
 	if (HostBeat = 0) and (HostBar = 0)
 		//# starting playback from beginning		
 		chord_beat_count = -1
 		scene_beat_count = -1
-		patt_beat_counts = [-1,-1,-1,-1] //# pattern_beat_count for each seq channel
-		patt_beat_count = -1
 		scene_changed = FALSE
 		if (songmode = 0)
 			current_scene = 0
 			current_chord = 0
-			current_patterns = [0,0,0,0] //# the current_pattern for each seq channel
-			current_pattern = 0
 		elseif (songmode = 1)
 			current_chord = 0
-			current_pattern = 0
-			current_patterns = [0,0,0,0] //# the current_pattern for each seq channel
 		endif
-		if not in_seq_mode and (mode > 2) 
+		if mode > 2 
 			//# No chord Rec, Select or Delete in playback
 			mode = 0
 		endif
@@ -254,8 +246,6 @@
 	//# Re-start when mode or scene changes
 	scene_beat_count = 0
 	chord_beat_count = 0
-	patt_beat_counts = [0,0,0,0] //# pattern_beat_count for each seq channel
-	patt_beat_count = 0
 	//# Log {Beat counts reset}
 @End
 
@@ -270,11 +260,6 @@
 	//# increment beat counts xonb
 	scene_beat_count = scene_beat_count + 1
 	chord_beat_count = chord_beat_count + 1
-	for i = 0 to 3
-		patt_beat_counts[i] = patt_beat_counts[i]+1 
-	endfor
-
-	patt_beat_count = patt_beat_count + 1
 	
 	//# Handle Scene and Chord changes
 	current_scene_duration = scene_bank[current_scene * sc_size]  * HostBeatsPerMeasure //# IN BEATS!
@@ -287,10 +272,10 @@
 	//# Log {Chord beats left: }, current_chord_duration - chord_beat_count
 	time_for_turnaround = FALSE
 	if use_turn_around
-	Call @TimeForTurnaround
+		Call @TimeForTurnaround
 	endif
 	
-	//# Chord progression-- Order of operations
+	//# Chord progressop -- Order of operations
 	if (scene_change_requested > -1) and (HostBeat = 0)
 		//# user requested scene change and its a new bar (& return to song)
 		//# Log {Handling scene change request. It a new bar}
@@ -299,41 +284,13 @@
 		//# its time to increment scene
 		Call @HandleSceneChange
 	elseif (chord_change_requested > -1)
-	//# User requested chord change & its a new beat
+		//# User requested chord change & its a new beat
 		Call @HandleChordChange
 	elseif time_for_turnaround
 		Call @HandleChordChange
 	elseif (chord_beat_count >= current_chord_duration)
 		Call @HandleChordChange
 	endif
-	
-	//# Sequence mode active pattern
-	//# handle a pattern change request on the current seq_ch
-	pattern_slot = (seq_ch * 64)+(current_scene * 8) + current_pattern
-	if pattern_change_requested > -1
-		current_patterns[seq_ch] = pattern_change_requested
-		pattern_change_requested = -1 //# reset request flag
-		pattmode=2
-	elseif (patt_beat_count >= patt_durs[pattern_slot])
-		Call @HandlePatternChange
-	endif
-
-	//# handle pattern changes for each sequence channel
-	for i = 0 to 3
-		pattern_slot = (i * 64)+(current_scene * 8) + current_patterns[i]
-		if patt_beat_counts[i] >= patt_durs[pattern_slot]
-			//# time to go to next pattern 
-			if (current_patterns[i] = 7) //# Wrap playback
-				current_pattern = 0
-			elseif (patt_durs[pattern_slot+1] <= 0)
-				current_patterns[i] = 0 //# no duration no next chord (chord_slot + 10)
-			else
-				current_patterns[i] = current_patterns[i] + 1
-			endif
-			patt_beat_counts[i] = 0
-		endif
-	endfor
-
 	Call @LogCurrentInfo
 @End
 
@@ -359,14 +316,12 @@
 	scene_changed = TRUE
 	if scene_change_requested > -1
 		current_scene = scene_change_requested
-	if return_to_song_mode_requested
-		songmode = 0
-		pattmode = 0
-	else
-		songmode = 1 //# lock to scene if user requests
-		pattmode = 1
-	endif
-	return_to_song_mode_requested = FALSE
+		if return_to_song_mode_requested
+			songmode = 0
+		else
+			songmode = 1 //# lock to scene if user requests
+		endif
+		return_to_song_mode_requested = FALSE
 	elseif (songmode > 0)
 		current_scene = current_scene
 	elseif (current_scene = 7) //# End of song 
@@ -391,7 +346,7 @@
 		SendMIDIProgramChange chD, pgm_chg_num+30
 	endif
 	Call @ResetBeatCounts
-		Log {----- SCENE CHANGE -----}, {S}, current_scene+1
+	Log {----- SCENE CHANGE -----}, {S}, current_scene+1
 	Call @HandleChordChange //# Scene change effect chord change
 @End
 
@@ -405,21 +360,15 @@
 			songmode = 2 //# Lock to chord if user requests chord change
 		endif
 	elseif (scene_change_requested > -1) //# also handle chord change
-		//# Log {Scene change requested handling chord and pattern reset}
+		//# Log {Scene change requested handling chord reset}
 		current_chord = 0
-		current_pattern = 0
-		current_patterns = [0,0,0,0] //# the current_pattern for each seq channel
-	scene_change_requested = -1
-	scene_changed = FALSE
+		scene_change_requested = -1
+		scene_changed = FALSE
 	elseif scene_changed
 		//# reset chord to 0 on scene change if songmode < 2
 		if (songmode <= 1)
 			Log {Scene changed reset chord to 0}
 			current_chord = 0
-		endif
-		if (pattmode <= 1)
-			current_pattern = 0
-			current_patterns = [0,0,0,0] //# the current_pattern for each seq channel
 		endif
 		scene_changed = FALSE
 	elseif (songmode = 2) //# Loop current chord & Scene
@@ -427,9 +376,8 @@
 	elseif (current_chord = 7) //# Wrap playback
 		current_chord = 0
 	elseif (time_for_turnaround)
-	//# play last chord for one bar as a turn around before scene change
+		//# play last chord for one bar as a turn around before scene change
 		current_chord = 7
-		current_pattern = 7
 	elseif (chord_bank[(chord_slot+10) + dur_slot] <= 0)
 		current_chord = 0 //# no duration no next chord (chord_slot + 10)
 	else
@@ -441,40 +389,18 @@
 	chord_slot = (current_scene * 100) + ((current_chord) * 10)
 	spa_pattern = chord_bank[chord_slot + patt_slot]
 	if spa_pattern >= 0
-	if spa_pattern = 16 //# select a random pattern
-		spa_pattern = Random 0, 15
-	endif
-	Log {Changing SPA pattern }, spa_pattern
+		if spa_pattern = 16 //# select a random pattern
+			spa_pattern = Random 0, 15
+		endif
+		Log {Changing SPA pattern }, spa_pattern
 		SendMIDICC 0, 21, spa_pattern
 	endif  
 	if HostRunning
 		Call @SendOutChordNotes
 	endif
-	//# Label pads if in sequence modes
-	if (mode>=4 and mode<=6)
-		LabelPads {SEQUENCE}, seq_ch+1, { -- MIDI_CH}, midi_channels_used[seq_ch+5]+1, { -- SCENE}, current_scene+1, { -- PATTERN}, current_pattern+1
-	else
-		LabelPads {Scene: }, current_scene+1, { Chord: }, current_chord+1
-	endif
+	//# Label pads
+	LabelPads {Scene: }, current_scene+1, { Chord: }, current_chord+1
 	Log {----- CHORD CHANGE -----}, {C}, current_chord+1
-	Call @SetupLayout
-@End
-
-@HandlePatternChange
-	//# handle pattern change xhpc
-	//# Need to set pattern_slot before calling
-	if (pattmode = 2) //# Loop current chord & Scene
-		current_pattern = current_pattern
-	elseif (current_pattern = 7) //# Wrap playback
-		current_pattern = 0
-	elseif (patt_durs[pattern_slot+1] <= 0)
-		current_pattern = 0 //# no duration no next chord (chord_slot + 10)
-	else
-		current_pattern = current_pattern + 1
-	endif
-	patt_beat_count = 0 //# reset patt beat count on new pattern
-	
-	Log {----- PATTERN CHANGE -----}, {P}, current_pattern+1 
 	Call @SetupLayout
 @End
 
@@ -482,88 +408,38 @@
 	chord_slot = (current_scene * 100) + ((current_chord) * 10)
 	current_chord_duration = chord_bank[chord_slot + dur_slot]
 	current_scene_duration = scene_bank[current_scene * sc_size]
-	Log {Playing: Scene: }, current_scene+1, { }, scene_beat_count+1, {/}, (current_scene_duration * HostBeatsPerMeasure), { beats}, { Chord:}, current_chord+1, { }, chord_beat_count+1, {/}, current_chord_duration, { beats}, { Mode: }, mode, { HostBeat: }, HostBeat+1, { SeqA: }, current_patterns[0]+1, {--}, patt_beat_counts[0]+1, { SeqB: }, current_patterns[1]+1, {--}, patt_beat_counts[1]+1, { SeqC: }, current_patterns[2]+1, {--}, patt_beat_counts[2]+1, { SeqD: }, current_patterns[3]+1, {--}, patt_beat_counts[3]+1, 
+	Log {Playing: Scene: }, current_scene+1, { }, scene_beat_count+1, {/}, (current_scene_duration * HostBeatsPerMeasure), { beats}, { Chord:}, current_chord+1, { }, chord_beat_count+1, {/}, current_chord_duration, { beats}, { Mode: }, mode, { HostBeat: }, HostBeat+1
 @End
 
 @OnPadDown
 	//# Splitting this event into separate handlers xopd
 	if in_mode_select and (LastPad <= (number_of_modes - 1))
-		if (LastPad>=4 and LastPad<=6)
-			//# Entering a Sequence mode
-			in_seq_mode = TRUE
-		for i = 0 to 15
-			LatchPad i, NO
-		endfor
-			mode=LastPad
-			Log {MODE: }, mode
-			LatchPad LastPad, YES
-			if mode=4
-			LabelPads {SEQUENCE MODE: Select a Channel to edit}
-			LatchPad seq_ch+8, YES
-			else
-				LabelPads {SEQUENCE EDIT MODE: Select a sequence type to edit. (Steps, Notes, Velocity or CC)}
-				LatchPad seq_type_to_edit+8, YES
-			endif
-		elseif (HostRunning and (LastPad > 0) and NOT allow_mode_chg_playbk)
+		if (HostRunning and (LastPad > 0) and NOT allow_mode_chg_playbk)
 			Exit //# Only return to song allowed in playback
-		elseif (HostRunning and ((LastPad = 8) or (LastPad = 9) or (LastPad = 11) or (LastPad = 12)) and not in_seq_mode)
+		elseif (LastPad=4 or LastPad=5 or LastPad=14)
+			Exit //# Not in use
+		elseif (HostRunning and (LastPad=8 or LastPad=9 or LastPad=11 or LastPad=12))
 			Exit //# Not allowed in playback
 		elseif (LastPad = 7)
 			Call @LogCurrentSceneToPresetFormat
-		elseif (mode=4) and (LastPad>=8 and LastPad<=13)
-			//# midi settings modes dont exit mode select just update knobs  	
-		//# in sequence mode
-		if LastPad = 13
-			LatchPad 4, YES
-			LatchPad seq_ch+8, YES
-			Exit //# Not in use
-		elseif LastPad = 12
-			mode=0 //# Exit Sequence mode
+		elseif (LastPad>=8 and LastPad<=13)
+			//# midi setup modes - dont exit in_select_mode
+			for i = 0 to 15
+				LatchPad i, NO
+			endfor
+			mode = LastPad
+			LatchPad mode, YES
+		elseif (HostRunning and LastPad=0)
+			//# Return to song mode requested
+			return_to_song_mode_requested = TRUE
+			scene_change_requested = current_scene
 			in_mode_select = FALSE
-			in_seq_mode = FALSE	
-			Call @SetupLayout
-		elseif (LastPad>=8 and LastPad<=11)
-			seq_ch = LastPad-8
-			Call @SetupKnobset10
-		endif
-		LatchPad LastPad, YES
-		LatchPad 4, YES
-		in_mode_select = FALSE
-	elseif (mode=5 or mode=6) and (LastPad>=8 and LastPad<=13)
-		//# sequence mode Edit or Midi Gen Modes 
-		if LastPad = 13
-			mode=0 //# Exit Sequence mode
-			in_mode_select = FALSE	
-			in_seq_mode = FALSE
-			Call @SetupLayout
-		elseif(LastPad>=8 and LastPad<=12)
-			seq_type_to_edit = LastPad-8
-			Call @SetupKnobset10
-		endif
-		LatchPad LastPad, YES
-		LatchPad 4, YES
-		in_mode_select = FALSE
-	elseif (LastPad>=8 and LastPad<=13)
-		//# midi setup modes - dont exit in_select_mode
-		for i = 0 to 15
-			LatchPad i, NO
-		endfor
-		mode = LastPad
-		LatchPad mode, YES
-	elseif (HostRunning and LastPad=0)
-		//# Return to song mode requested
-		return_to_song_mode_requested = TRUE
-		scene_change_requested = current_scene
-		in_mode_select = FALSE
-		in_seq_mode = FALSE
-		songmode = 0
-		pattmode = 0
-		mode = 0
-		ColorPad 0, col_pending
-		ColorPad 8, col_pending
+			songmode = 0
+			mode = 0
+			ColorPad 0, col_pending
+			ColorPad 8, col_pending
 		else
 			mode = LastPad
-			in_seq_mode = FALSE
 			Log {MODE:}, mode
 			in_mode_select = FALSE
 		endif
@@ -575,14 +451,14 @@
 	//# NOT IN MODE SELECT......
 	elseif NOT in_mode_select
 		//# handle mode actions if record or reset else do knob scene change
-		Call @OnPadDown_SceneChordPatternChange
+		Call @OnPadDown_SceneChordChange
 		Call @OnPadDown_KnobSetSelect
 		if (mode = 3) and (LastPad > 7)
 			Call @SetupLayout
-		rec_chord_note_count = 0
-		LabelPad current_chord+8, {...waiting}
-		ColorPad current_chord+8, col_chord_waiting
-		elseif (mode = 14) //# COPY/PASTE
+			rec_chord_note_count = 0
+			LabelPad current_chord+8, {...waiting}
+			ColorPad current_chord+8, col_chord_waiting
+		elseif (mode = 6) //# COPY/PASTE
 			Call @CopyPaste
 		elseif (mode = 15) and (LastPad <= 7) //# reset mode
 			Log {Reset scene called}
@@ -599,7 +475,7 @@
 
 @OnPadUp
 	if NOT HostRunning and (LastPad >= 8)
-		Call @TurnOffChordNotes
+			Call @TurnOffChordNotes
 	endif
 @End
 
@@ -608,7 +484,6 @@
 	if mode = 0
 		LabelPads {PLAYBACK: Loop whole song}
 		songmode = 0
-		pattmode = 0
 	elseif mode = 1
 		LabelPads {+CHORDS SELECT: Select chord, THEN set root, type, bass note}
 		songmode = 2 //# Lock to chord
@@ -621,20 +496,14 @@
 		LabelPads {+CHORDS RECORD: Select record channel, chord pad, then play chord notes}
 		songmode = 2 //# Lock to chord
 		Call @SetupKnobset1
-	elseif (mode = 4)
-		LabelPad 8, {SEQ1       CH-}, midi_channels_used[5]+1
-		LabelPad 9, {SEQ2       CH-}, midi_channels_used[6]+1
-		LabelPad 10, {SEQ3       CH-}, midi_channels_used[7]+1
-		LabelPad 11, {SEQ4       CH-}, midi_channels_used[8]+1
-		LabelPad 12, {EXIT SEQUENCING}
-		LabelPad 13, { }
-	elseif (mode >= 5) and (mode <=6)
-		LabelPad 8, {SEQ}, seq_ch+1, {-S}, current_scene+1, {P}, current_pattern+1, {         STEPS}
-		LabelPad 9, {SEQ}, seq_ch+1, {-S}, current_scene+1, {P}, current_pattern+1, {         NOTES}
-		LabelPad 10, {SEQ}, seq_ch+1, {-S}, current_scene+1, {P}, current_pattern+1, {          VELO}
-		LabelPad 11, {SEQ}, seq_ch+1, {-S}, current_scene+1, {P}, current_pattern+1, {             CC1}
-		LabelPad 12, {SEQ}, seq_ch+1, {-S}, current_scene+1, {P}, current_pattern+1, {             CC2}
-		LabelPad 13, {EXIT SEQUENCING}
+	elseif mode = 6
+		//# Copy/Paste pad hit so 'copy' current scene and chord
+		//# in_select_mode = FALSE its already been exited 
+		songmode = 2 //# Lock to chord
+		copied_scene = current_scene
+		copied_chord = current_chord
+		Log {Copied current s}, current_scene+1, { chord }, current_chord+1
+		LabelPads {Current scene & chord copied. Select a scene or chord slot to paste to}
 	elseif mode = 8
 		if NOT HostRunning
 			LabelPads {EXT MIDI Scale: Defines how EXT midi notes are transposed to chord notes}
@@ -642,39 +511,29 @@
 		endif
 	elseif mode = 9
 		if NOT HostRunning
-			LabelPads {EXTERNAL MIDI IN/OUT CHANNELS: Midi harmonized to chord progresssion.}
+			LabelPads {EXT MIDI IN/OUT CHANNELS: Midi harmonized to chord progresssion.}
 			Call @SetupKnobset4
 		endif
 	elseif mode = 10
-		LabelPads {EXTERNAL MIDI MODES:  0.OFF 1.Chord, 2.RoundToChord, 3.+NonChord, 4.Bass, 5.Root, 6.Third, 7.Fifth 8.THRU}
+		LabelPads {EXT MIDI MODES:  0.OFF 1.Chord, 2.RoundToChord, 3.+NonChord, 4.Bass, 5.Root, 6.Third, 7.Fifth 8.THRU}
 		//# Harmony modes: Off, ChordOnly, RoundToChord, +Passing, Bass, Root, 3rd, 5th, Thru
 		songmode = 1 //# Lock to scene
-		pattmode = 1
 		Call @SetupKnobset3
 	elseif mode = 11
 		if NOT HostRunning
-			LabelPads {SEQUENCE MIDI: Sequences harmonized to chord progression.}
+			LabelPads {MG SEQUENCE: MG Sequences harmonized to chord progression.}
 			Call @SetupKnobset8
 		endif
 	elseif mode = 12
 		if NOT HostRunning
-			LabelPads {Chord notes out to instruments or midi processors}
+			LabelPads {CHORDS OUT: Midi channels}
 			Call @SetupKnobset7
 		endif
 	elseif mode = 13
 		if NOT HostRunning
-			LabelPads {Scene activate/mute midi out channels}
+			LabelPads {CHORDS OUT: Note type select}
 			Call @SetupKnobset9
 		endif
-	elseif mode = 14
-		//# Copy/Paste pad hit so 'copy' current scene and chord
-		//# in_select_mode = FALSE its already been exited 
-		songmode = 2 //# Lock to chord
-		pattmode = 2
-		copied_scene = current_scene
-		copied_chord = current_chord
-		Log {Copied current s}, current_scene+1, { chord }, current_chord+1
-		LabelPads {Current scene & chord copied. Select a scene or chord slot to paste to}
 	elseif mode = 15
 		LabelPads {DELETE: Select a scene or chord slot to reset}
 	endif
@@ -683,33 +542,22 @@
 	endif
 @End
 
-@OnPadDown_SceneChordPatternChange
-	//# handle scene/chord/pattern change xopds
-	if (LastPad >= 0 and LastPad <= 7) and not (mode=5 or mode=6)
-		//# Scene change except in sequence edit modes
+@OnPadDown_SceneChordChange
+	//# handle scene/chord change xopds
+	if (LastPad >= 0 and LastPad <= 7)
+		//# Scene change
 		Log { SCENE CHANGE REQUESTED }
-			scene_change_requested = LastPad
+		scene_change_requested = LastPad
 		if NOT HostRunning //# immediate change else newbeat/bar handles
 			Call @HandleSceneChange 
 		endif
-	elseif (LastPad >= 8 and LastPad <= 15) and not (mode>=4 and mode<=6) 	
-		//# User Chord change except when in sequence modes 
+	elseif (LastPad >= 8 and LastPad <= 15) 	
+		//# User Chord change 
 		Log { CHORD CHANGE REQUESTED }
 		chord_change_requested = LastPad - 8 //# chrd 0-7
 		if NOT HostRunning //# immediate change else newbeat/bar handles
 			Call @HandleChordChange 
 		endif
-	elseif (LastPad >= 8 and LastPad <= 15) and (mode=4)
-		//# User sequence pattern# change in current scene
-		Log { SEQUENCE PATTERN CHANGE REQUESTED }
-		pattern_change_requested = LastPad - 8 //# chrd 0-7
-		if NOT HostRunning //# immediate change else newbeat/bar handles
-			pattern_slot = (seq_ch * 64)+(current_scene * 8) + current_pattern
-			Call @HandlePatternChange
-		endif
-	elseif (mode=5 or mode=6)
-		//# Sequence mode
-		Log {Handle sequence slot select: }, LastPad+1
 	endif
 	Call @SetupLayout	
 @End
@@ -723,8 +571,6 @@
 			Call @SetupKnobset6
 		elseif (mode = 7)
 			Call @SetupKnobset3 //# SCENE Midi IN Modes
-		elseif (mode>=4 and mode<=6)
-			Call @SetupKnobset10 //# Sequence modes	
 		else
 			Call @SetupKnobset0
 		endif
@@ -733,8 +579,6 @@
 			Call @SetupKnobset2
 		elseif (mode = 2) //# Construct chords 4 knobs
 			Call @SetupKnobset6
-		elseif (mode>=4 or mode>=6)
-			Call @SetupKnobset10
 		else
 			Call @SetupKnobset1
 		endif
@@ -755,52 +599,52 @@
 
 
 @SaveSelectedChordPad
-	//# save to pad in select mode once chord params chosen on knobs 
-	
-	//# chord to be updated
-	chord_slot = (current_scene * 100) + ((current_chord) * 10)
-	
-	//# Set fields not updated here. Default if new else saved
-	chrd_duration = 4 //# default value for new chord
-	if chord_bank[chord_slot + dur_slot] > 0
-		chrd_duration = chord_bank[chord_slot + dur_slot]
-	endif
-	chord_bank[chord_slot + dur_slot] = chrd_duration
-	
-	//# Only update changed fields
-	if root_updated or type_updated
-		//# Get chord_bank location and intervals for new chord
-		chord_root = slct_chord_root
-		chord_type_slot = slct_chord_type * 5 //# array saved in groups 5
-		chord_3rd = (slct_chord_root + chord_types[chord_type_slot])
-		chord_5th = (slct_chord_root + chord_types[chord_type_slot + 1])
-		chord_7th = (slct_chord_root + chord_types[chord_type_slot + 2])
-		//# A triad not a tetrad
-		if chord_types[chord_type_slot + 2] = -1 
-			chord_7th = -1
+		//# save to pad in select mode once chord params chosen on knobs 
+		
+		//# chord to be updated
+		chord_slot = (current_scene * 100) + ((current_chord) * 10)
+		
+		//# Set fields not updated here. Default if new else saved
+		chrd_duration = 4 //# default value for new chord
+		if chord_bank[chord_slot + dur_slot] > 0
+			chrd_duration = chord_bank[chord_slot + dur_slot]
 		endif
-		//# update chord values in chord_bank
-		chord_bank[chord_slot] = chord_root
-		chord_bank[chord_slot + 1] = chord_3rd
-		chord_bank[chord_slot + 2] = chord_5th
-		chord_bank[chord_slot + 3] = chord_7th
-		root_updated = FALSE
-		type_updated = FALSE
-	elseif inv_updated
-		chrd_inversion = slct_chord_inversion	
-		chord_bank[chord_slot + inv_slot] = chrd_inversion
-		inv_updated = FALSE
-	elseif bass_updated
-		chrd_bass = slct_chord_bass_note
-		chord_bank[chord_slot + bass_slot] =  chrd_bass
-		bass_updated = FALSE
-	endif	
-	
-	//# Update chord pads
-	Log {Chord notes }, chord_root, { }, chord_3rd, { }, chord_5th, { }, chord_7th
-	Log {7th VAL: }, chord_bank[chord_slot + 3], { BASS VAL: }, chord_bank[chord_slot + bass_slot]
-	chrd_to_label = current_chord+8
-	Call @LabelChordPad
+		chord_bank[chord_slot + dur_slot] = chrd_duration
+		
+		//# Only update changed fields
+		if root_updated or type_updated
+			//# Get chord_bank location and intervals for new chord
+			chord_root = slct_chord_root
+			chord_type_slot = slct_chord_type * 5 //# array saved in groups 5
+			chord_3rd = (slct_chord_root + chord_types[chord_type_slot])
+			chord_5th = (slct_chord_root + chord_types[chord_type_slot + 1])
+			chord_7th = (slct_chord_root + chord_types[chord_type_slot + 2])
+			//# A triad not a tetrad
+			if chord_types[chord_type_slot + 2] = -1 
+				chord_7th = -1
+			endif
+			//# update chord values in chord_bank
+			chord_bank[chord_slot] = chord_root
+			chord_bank[chord_slot + 1] = chord_3rd
+			chord_bank[chord_slot + 2] = chord_5th
+			chord_bank[chord_slot + 3] = chord_7th
+			root_updated = FALSE
+			type_updated = FALSE
+		elseif inv_updated
+			chrd_inversion = slct_chord_inversion	
+			chord_bank[chord_slot + inv_slot] = chrd_inversion
+			inv_updated = FALSE
+		elseif bass_updated
+			chrd_bass = slct_chord_bass_note
+			chord_bank[chord_slot + bass_slot] =  chrd_bass
+			bass_updated = FALSE
+		endif	
+		
+		//# Update chord pads
+		Log {Chord notes }, chord_root, { }, chord_3rd, { }, chord_5th, { }, chord_7th
+		Log {7th VAL: }, chord_bank[chord_slot + 3], { BASS VAL: }, chord_bank[chord_slot + bass_slot]
+		chrd_to_label = current_chord+8
+		Call @LabelChordPad
 @End
 
 @SaveConstructedChordPad
@@ -964,16 +808,16 @@
 	for i = 0 to 3
 		//# stored in 1st 4 note slots (0-3) on each channel
 		SendMIDINoteOff ch1, (GetNoteState ch1, i), 127
-	SetNoteState ch1, i, FALSE
-	
-	SendMIDINoteOff ch2, (GetNoteState ch2, i), 127
-	SetNoteState ch1, i, FALSE
-	
-	SendMIDINoteOff ch3, (GetNoteState ch3, i), 127
-	SetNoteState ch1, i, FALSE
-	
-	SendMIDINoteOff ch4, (GetNoteState ch4, i), 127
-	SetNoteState ch1, i, FALSE
+		SetNoteState ch1, i, FALSE
+		
+		SendMIDINoteOff ch2, (GetNoteState ch2, i), 127
+		SetNoteState ch1, i, FALSE
+		
+		SendMIDINoteOff ch3, (GetNoteState ch3, i), 127
+		SetNoteState ch1, i, FALSE
+		
+		SendMIDINoteOff ch4, (GetNoteState ch4, i), 127
+		SetNoteState ch1, i, FALSE
 	endfor
 @End
 
@@ -1147,16 +991,7 @@
 			if NOT incoming_is_chord_note
 				velocity = velocity_dipped
 			endif
-		SendMIDINoteOn MIDIChannel, HAR_NOTE_OUT, velocity
-			//# Log {OUTGOING HARMONY NOTE: }, HAR_NOTE_OUT
-			
-			//# xxx 
-			//# This notes held over chord change, we need to retrigger
-			//# h_notes_used[active_harmony_notes] = midi_note
-			//# h_channels_used[active_harmony_notes] = MIDIChannel
-			//# active_harmony_notes = active_harmony_notes + 1
-			//# harmony_notes_used = harmony_notes_used + 1
-			//# Log {active_harmony_notes: }, active_harmony_notes, { Most recent: }, h_notes_used[active_harmony_notes], { : }, h_channels_used[active_harmony_notes]  
+			SendMIDINoteOn MIDIChannel, HAR_NOTE_OUT, velocity  
 		endif
 	elseif (sc_harm_mode = 7) 
 		//# ignore scn_txpose and octave adj in thru mode
@@ -1164,6 +999,7 @@
 		SendMIDINoteOn MIDIChannel, midi_note, MidiVelocity
 		//# Log {Midi sent through in mode 8}
 	endif
+			
 @End
 
 @GetIncomingNoteType
@@ -1313,7 +1149,7 @@
 @HumanizeVelocity
 	// #Velocity handling
 	humanize_velocity = 80 // #50-100 Lower = more variation
-	dip_velocity_pct = 60 // #50-100 Reduce velocity by %
+		dip_velocity_pct = 60 // #50-100 Reduce velocity by %
 	humanize_pct = (Random humanize_velocity, 100 ) / 100
 	sinputVelocity = MidiVelocity
 	if NOT MidiVelocity
@@ -1328,54 +1164,46 @@
 	for i = 1 to 8
 		if MIDIChannel = midi_channels_used[i] and not (mode = 3)
 			// #retrieve the harmony_note sent from note locker
-		harmony_note = GetNoteState MIDIChannel, MIDINote  
-		SendMIDINoteOff MIDIChannel, harmony_note, MIDIVelocity  
-		SetNoteState MIDIChannel, MIDINote, FALSE	
+			harmony_note = GetNoteState MIDIChannel, MIDINote  
+			SendMIDINoteOff MIDIChannel, harmony_note, MIDIVelocity  
+			SetNoteState MIDIChannel, MIDINote, FALSE	
 		endif
 	endfor
-@End
-
-@ResetUsedHarmony
-	Log {RESETTING USED HARMONY TRACKING }
-	harmony_notes_used = 0 //# count of notes used since last silence
-	active_harmony_notes = 0 //# active notes currently playing
-	FillArray h_notes_used, 0, 128  //# store of notes used
-	FillArray h_channels_used, 0, 128 //# store of channels used
 @End
 
 @HandleRecordNotes
 	Log {HANDLING RECORD NOTES TO CHORD SLOT}
 	if (mode = 3) and (rec_chord_note_count <= 3)
-	//# In record mode and chord selected for updating
-	Log {Chord note recieved num: }, rec_chord_note_count
-	
-	if rec_chord_note_count = 0
-		//# Recording is happening so reset the current notes
-		chord_slot = (current_scene * 100) + (current_chord * 10)
-		for i = 0 to 3
-			Log {RESETTING CHORD SLOT }, chord_slot+i
-		chord_bank[chord_slot+i] = -1
-		endfor
-		chord_bank[chord_slot+inv_slot] = 0 //# start new chord with no inv.
-		rec_chord_notes = [-1,-1,-1,-1] //# reset array to empty
-		Log {Current chord: }, current_chord
-		chrd_to_label = current_chord+8
-		Call @LabelChordPad //# re-label after notes reset
-	endif
+		//# In record mode and chord selected for updating
+		Log {Chord note recieved num: }, rec_chord_note_count
+		
+		if rec_chord_note_count = 0
+			//# Recording is happening so reset the current notes
+			chord_slot = (current_scene * 100) + (current_chord * 10)
+			for i = 0 to 3
+				Log {RESETTING CHORD SLOT }, chord_slot+i
+				chord_bank[chord_slot+i] = -1
+			endfor
+			chord_bank[chord_slot+inv_slot] = 0 //# start new chord with no inv.
+			rec_chord_notes = [-1,-1,-1,-1] //# reset array to empty
+			Log {Current chord: }, current_chord
+			chrd_to_label = current_chord+8
+			Call @LabelChordPad //# re-label after notes reset
+		endif
 		
 		//# Store recorded chord notes and update chord_bank and label
-	rec_chord_notes[rec_chord_note_count] = MIDINote
-	CopyArray rec_chord_notes, sort_list
-	rec_chord_note_count = rec_chord_note_count + 1
-	len_list = rec_chord_note_count
-	if len_list > 1
-		Call @SortList
-	endif
-	CopyArray sort_list, rec_chord_notes
-	Call @StoreChordNotes
-	chrd_to_label = current_chord+8
-	Call @LabelChordPad
-	Call @SetupLayout
+		rec_chord_notes[rec_chord_note_count] = MIDINote
+		CopyArray rec_chord_notes, sort_list
+		rec_chord_note_count = rec_chord_note_count + 1
+		len_list = rec_chord_note_count
+		if len_list > 1
+			Call @SortList
+		endif
+		CopyArray sort_list, rec_chord_notes
+		Call @StoreChordNotes
+		chrd_to_label = current_chord+8
+		Call @LabelChordPad
+		Call @SetupLayout
 	endif
 @End
 
@@ -1383,15 +1211,15 @@
 	//# Store the recorded notes to the chord slot
 	chord_slot = (current_scene * 100) + (current_chord * 10)
 	for i = 0 to 3
-	if rec_chord_notes[i] >= 0
-		chord_bank[chord_slot + i] = rec_chord_notes[i]
-		Log {Chord note }, i, { is }, rec_chord_notes[i], { in chord slot}, chord_slot+i
+		if rec_chord_notes[i] >= 0
+			chord_bank[chord_slot + i] = rec_chord_notes[i]
+			Log {Chord note }, i, { is }, rec_chord_notes[i], { in chord slot}, chord_slot+i
 		else
-		chord_bank[chord_slot + i] = -1
+			chord_bank[chord_slot + i] = -1
 		endif
 	endfor
 	if chord_bank[chord_slot + dur_slot] <= 0 //# Set a default duration
-	chord_bank[chord_slot + dur_slot] = 4
+		chord_bank[chord_slot + dur_slot] = 4
 	endif
 @End
 
@@ -1422,7 +1250,6 @@
 		CopyArray chord_bank[copied_scene * 100], chord_bank[LastPad * 100], 100
 		//# Exit copy paste
 		songmode = 1
-		pattmode = 1
 		mode=0
 	elseif LastPad >= 8
 		Log {pasting to chord }, LastPad-8
@@ -1432,7 +1259,6 @@
 		CopyArray chord_bank[chord_slot_from], chord_bank[chord_slot_to], 10
 		//# Exit copy paste
 		songmode = 2
-		pattmode = 2
 		mode=0
 	endif
 	copied_scene = -1 //# reset
@@ -1672,7 +1498,7 @@
 @SetupKnobset9
 	//# Chord Notes out styles
 	knob_set = 9
-	LabelKnobs {Chord Notes out}
+	LabelKnobs {Send out...}
 	kv1 = scene_bank[(current_scene * sc_size) + sc_och1_slot]
 	kv2 = scene_bank[(current_scene * sc_size) + sc_och2_slot]
 	kv3 = scene_bank[(current_scene * sc_size) + sc_och3_slot]
@@ -1684,225 +1510,6 @@
 	Call @LabelKnobset9
 	Call @LabelChordNotesOutPad
 @End
-
-@SetupSeqModeVars
-	//# 4 sequence channels exist for each scene. 8 patterns possible per scene per channel
-	//# It can be repeated up to 32 times in a scene
-	//# A pattern is 16 steps long (1 measure).
-	//# It contains information om Steps, Notes, Velocity, CC1 and CC2
-
-	//# Setup Sequence mode variables xsmv
-	in_seq_mode = FALSE //# in this mode 
-	current_pattern = 0 //# 0-7 display 1-9
-	current_step = 0
-	seq_pad = 0 //# 0-15 display 1-16. A note with vel and 2x cc vals
-
-	//# Keeping track of 4 channles of sequences
-	patt_beat_counts = [0,0,0,0] //# pattern_beat_count for each seq channel
-	current_patterns = [0,0,0,0] //# the current_pattern for each seq channel
-	
-	//# for seq tracking and change
-	pattern_change_requested = -1
-	patt_beat_count = 0
-	seq_step_count = 0
-	
-	//# setup knobs
-	seq_ch = 0 //# 0-3 display 1-4 
-	patt_dur = 0 //# in beats same as chord duration
-	patt_oct = 0 //# -1, 0, +1 offset from chords to suit instrument
-	patt_rndvel = 0 //# 0-10 val for amt of random veolocity variation
-	//# pattern_slot:  (seq_ch * 64)+(current_scene * 8) + current_pattern
-	patt_durs = [] //# 4chs 8scenes 8patterns
-	patt_octaves = []
-	patt_rndvels = []	
-	
-	//# step edit knobs
-	seq_to_edit = 0 //#0-3 sets what lastPad knob edits Note, Velo, CC1, CC2
-	seq_pad_val = 0 //# TEMP XXX NEED TO REPLACE THIS WITH REL. ARRAYS.
-	//# seq to edit is stored in below arrays
-	euc_notes = 0 //# 0-16 euclidian pattern number of notes
-	euc_rot = 0 //# 0-16 euclidian rotation of notes in pattern
-	patt_eucnotes = []
-	patt_eucrots = []
-	//# seq_slot =  (current_scene * 128) + (current_pattern * 16)+ (step_num)
-	seq_notesch1 = [] //# a value for each step in each seq
-	seq_notesch2 = [] //# 16steps, 8sequences, 8scenes = 1024
-	seq_notesch3 = [] //# range is number of note options 0-32
-	seq_notesch4 = []
-	//# 7scalenotes*3octaves, off, sust_prev, rnd, 8chordal choices
-	len_seq_note_options = 32
-	seq_note_options = [] 
-	seq_veloch1 = [] //# range is 0-127
-	seq_veloch2 = []
-	seq_veloch3 = []
-	seq_veloch4 = []
-	seq_cc1ch1 = [] //# range is 0-127
-	seq_cc1ch2 = []
-	seq_cc1ch3 = []
-	seq_cc1ch4 = [] 
-	seq_cc2ch1 = []
-	seq_cc2ch2 = []
-	seq_cc2ch3 = []
-	seq_cc2ch4 = [] 
-	
-	//# Midi Gen knobs for Note, Velo and CC sequences
-	//# the actual generated midi is written to above seq arrays, not stored
-	seq_type_to_edit = 0 //# 0-3 sets what type of sequence we are generating Notes
-	ramp = 0 //# a number/index to an array or ramps
-	ramps = [] //# 16 steps vals. Max of 64 ramps (1024)
-	ramp_slot = 0 //# (ramp * 16)
-	ramp_range_max = 127 //# or len_seq_note_options if seq_type_to_edit = 0 (notes)
-	ramp_min = 0 //# min val for ramp. range 0-127
-	ramp_max = 127 //# max val for ramp. used velo, cc1 and cc2
-@End
-
-@SetupKnobset10
-	//# Sequence mode knobs xs10
-	knob_set = 10
-	pattern_slot = (seq_ch * 64)+(current_scene * 8) + current_pattern
-	LabelPads {SEQUENCE}, seq_ch+1, { -- MIDI_CH}, midi_channels_used[seq_ch+5]+1, { -- SCENE}, current_scene+1, { -- PATTERN}, current_pattern+1
-	if mode = 4
-		LabelKnobs {SEQ},seq_ch+1, { S}, current_scene+1, { P}, current_pattern+1, { SETUP} 
-		
-		patt_dur = patt_durs[pattern_slot]
-		patt_bars = Div patt_dur, 4
-		patt_beats = (patt_dur % HostBeatsPerMeasure) * (100/HostBeatsPerMeasure)
-		patt_oct = patt_octaves[pattern_slot]
-		patt_rndvel = patt_rndvels[pattern_slot]
-		
-		SetKnobValue 0, TranslateScale patt_dur, 0, 32, 0, 127
-		SetKnobValue 1, TranslateScale patt_oct, -1, 1, 0, 127
-		SetKnobValue 2, TranslateScale patt_rndvel, 0, 10, 0, 127
-		LabelKnob 0, {DUR: }, patt_bars, {.}, patt_beats
-		LabelKnob 1, {OCT: }, patt_oct
-		LabelKnob 2, {RNVEL: }, patt_rndvel
-		LabelKnob 3, { }
-	elseif mode = 5
-		if (seq_type_to_edit=0)
-			LabelKnobs {Sequence Step-edit}
-		elseif (seq_type_to_edit=1)
-			LabelKnobs {Sequence Note-edit}
-		elseif (seq_type_to_edit=2)
-			LabelKnobs {Sequence Velo-edit}
-		elseif (seq_type_to_edit=3)
-			LabelKnobs {Sequence CC1-edit}
-		elseif (seq_type_to_edit=4)
-			LabelKnobs {Sequence CC2-edit}
-		endif
-		//# seq_type_to_edit determines knobs Steps, Notes, Velo, CC1,CC2
-		//# seq_pad_val = 0 //#to edit depending on seq_to_edit selected and CH
-		euc_notes = patt_eucnotes[pattern_slot] //# Euclidian #num notes param
-		euc_rot = patt_eucrots[pattern_slot] //# Euclidian sequence rotation
-		SetKnobValue 0, TranslateScale seq_to_edit, 1, 4, 0, 127
-		SetKnobValue 1, TranslateScale seq_pad_val, 0, 127, 0, 127
-		SetKnobValue 2, TranslateScale euc_notes, 0, 15, 0, 127
-		SetKnobValue 3, TranslateScale euc_rot, 0, 15, 0, 127
-		
-		LabelKnob 1, {Pad: }, seq_pad_val
-		LabelKnob 2, {NOTES: }, euc_notes
-		LabelKnob 3, {ROT: }, euc_rot
-	elseif mode = 6
-		//# Gen midi sequence. Knob vals not stored.
-		//# Seq's updated when Knob1-3 are changed not knob0
-		LabelKnobs {Sequence midi-gen}
-		if (seq_type_to_edit = 0)
-			ramp_range_max = len_seq_note_options
-		else
-			ramp_range_max = 127
-		endif
-		//# knob 0 not it use
-		SetKnobValue 1, TranslateScale ramp, 0, 32, 0, 127
-		SetKnobValue 2, TranslateScale ramp_min, 0, ramp_range_max, 0, 127
-		SetKnobValue 3, TranslateScale ramp_max, 0, ramp_range_max, 0, 127
-		LabelKnob 1, {RAMP: }, ramp
-		LabelKnob 2, {HI: }, ramp_min
-		LabelKnob 3, {LO: }, ramp_max
-	endif
-@End
-
-@KnobChangeSet10
-	//# Sequence modes knob change
-	pattern_slot = (seq_ch * 64)+(current_scene * 8) + current_pattern
-	if mode = 4
-		//# Sequence Setup
-		if LastKnob = 0
-			patt_durs[pattern_slot] = Round TranslateScale (GetKnobValue 0), 0, 127, 0, 32
-		endif
-		if LastKnob = 1
-			patt_octaves[pattern_slot] = Round TranslateScale (GetKnobValue 1), 0, 127, -1, 1
-		endif
-		if LastKnob = 2
-			patt_rndvels[pattern_slot] = Round TranslateScale (GetKnobValue 2), 0, 127, 0, 10
-		endif
-		if LastKnob = 3
-			//# not in use yet
-		endif
-		patt_dur = patt_durs[pattern_slot]
-		patt_bars = Div patt_dur, 4
-		patt_beats = (patt_dur % HostBeatsPerMeasure) * (100/HostBeatsPerMeasure)
-		
-		LabelKnob 0, {DUR: }, patt_bars, {.}, patt_beats
-		LabelKnob 1, {OCT: }, patt_octaves[pattern_slot]
-		LabelKnob 2, {RVEL: }, patt_rndvels[pattern_slot]
-		LabelKnob 3, { }
-	elseif (mode=5)
-		//# Step edit sequence set Note, Velo, CC1, CC2
-		if LastKnob = 0
-			//# not in use
-		endif
-		if LastKnob = 1
-			seq_pad_val = Round TranslateScale (GetKnobValue 1), 0, 127, 0, 32
-			LabelKnob 1, seq_pad_val //# update relevant seq array
-		endif
-		if LastKnob = 2
-			patt_eucnotes = Round TranslateScale (GetKnobValue 1), 0, 127, 0, 15
-			LabelKnob 2, {NOTES: }, patt_eucnotes[pattern_slot]
-		endif
-		if LastKnob = 3
-			patt_eucrots[pattern_slot] = Round TranslateScale (GetKnobValue 1), 0, 127, 0, 15
-			LabelKnob 3, {ROT: }, patt_eucrots[pattern_slot]
-		endif
-	elseif (mode=6)
-		//# Sequence midi generation (ramps) for Notes, Velo, cc1 and cc2
-		if (seq_type_to_edit = 0)
-			ramp_range_max = len_seq_note_options
-		else
-			ramp_range_max = 127
-		endif
-		if LastKnob = 0
-			//# not in use yet 
-		endif
-		if LastKnob = 1
-			ramp = Round TranslateScale (GetKnobValue 1), 0, 127, 0, 64
-			LabelKnob 1, {RAMP: }, ramp
-		endif
-		if LastKnob = 2
-			ramp_min = Round TranslateScale (GetKnobValue 1), 0, 127, 0, ramp_range_max
-			LabelKnob 2, {MIN: }, ramp_min
-		endif
-		if LastKnob = 3
-			ramp_max = Round TranslateScale (GetKnobValue 1), 0, 127, 0, ramp_range_max
-			LabelKnob 3, {MAX: }, ramp_max
-		endif
-	endif
-	seq_pad = current_pattern+8
-	Call @LabelSequencePad
-@End
-
-
-@LabelSequencePad
-	//# modes 4-6 sequence modes xlsp
-	pattern_slot = (seq_ch * 64)+(current_scene * 8) + seq_pad-8
-	if (mode=4)
-		patt_dur = patt_durs[pattern_slot]
-		patt_bars = Div patt_dur, 4
-		patt_beats = (patt_dur % HostBeatsPerMeasure) * (100/HostBeatsPerMeasure)
-		LabelPad seq_pad, {[}, patt_bars, {.}, patt_beats, { bars]}, {    OCT:}, patt_octaves[pattern_slot], {  RVEL:}, patt_rndvels[pattern_slot]
-	elseif (mode=5 or mode=6)
-		LabelPad current_step, {C3(60)       v100       cc1:20        cc2:40}
-	endif	
-@End
-
 
 @LabelKnobset4
 	if midi_channels_used[1] = -1
@@ -2024,25 +1631,23 @@
 	if knob_set = 0 
 		Call @SetupKnobset0 //# scene settings
 	elseif knob_set = 1
-	Call @SetupKnobset1 //# chord settings
+		Call @SetupKnobset1 //# chord settings
 	elseif knob_set = 2
-	Call @SetupKnobset2	//# chord select
+		Call @SetupKnobset2	//# chord select
 	elseif knob_set = 3
-	Call @SetupKnobset3	//# scene midi in modes (harmony modes)
+		Call @SetupKnobset3	//# scene midi in modes (harmony modes)
 	elseif knob_set = 4
-	Call @SetupKnobset4	//# midi in channels
+		Call @SetupKnobset4	//# midi in channels
 	elseif knob_set = 5
-	Call @SetupKnobset5	//# midi in key scale
+		Call @SetupKnobset5	//# midi in key scale
 	elseif knob_set = 6
-	Call @SetupKnobset6	//# midi construct
+		Call @SetupKnobset6	//# midi construct
 	elseif knob_set = 7
-	Call @SetupKnobset7	//# midi out channels A
+		Call @SetupKnobset7	//# midi out channels A
 	elseif knob_set = 8
-	Call @SetupKnobset8	//# midi out channels B
+		Call @SetupKnobset8	//# midi out channels B
 	elseif knob_set = 9
-	Call @SetupKnobset9	//# midi out channels B
-	elseif knob_set = 10
-	Call @SetupKnobset10
+		Call @SetupKnobset9	//# midi out channels B
 	endif
 	//# On entering select mode the following need knobsets selected
 	if in_mode_select
@@ -2092,8 +1697,6 @@
 		Call @KnobChangeSet8	//# Midi out channels B
 	elseif knob_set = 9
 		Call @KnobChangeSet9	//# Midi out channel On/Off
-	elseif knob_set = 10
-		Call @KnobChangeSet10	//#Sequence modes
 	endif 
 @End 
 
@@ -2103,7 +1706,7 @@
 		scn_duration = Round TranslateScale (GetKnobValue 0), 0, 127, 0, 32
 		if scn_duration <> scene_bank[current_scene * sc_size] 	
 			scene_bank[current_scene * sc_size] = scn_duration
-		LabelKnob 0 , {Dur }, scn_duration
+			LabelKnob 0 , {Dur }, scn_duration
 		endif
 	endif
 	if LastKnob = 1
@@ -2118,17 +1721,17 @@
 		if scn_preset <> scene_bank[(current_scene * sc_size) + sc_preset_slot] 
 			scene_bank[(current_scene * sc_size) + sc_preset_slot] = scn_preset
 			LabelKnob 2, scn_preset
-		Call @ChangeScenePreset
+			Call @ChangeScenePreset
 		endif
 	endif
 	if LastKnob = 3
 		scn_pgm_chg = Round TranslateScale (GetKnobValue 3), 0, 127, -1, 8
 		if scn_pgm_chg <> scene_bank[(current_scene * sc_size) + sc_pgmchg_slot]
-		scene_bank[(current_scene * sc_size) + sc_pgmchg_slot] = scn_pgm_chg
-		if scn_pgm_chg >=0
-			LabelKnob 3, {PChg }, scn_pgm_chg
+			scene_bank[(current_scene * sc_size) + sc_pgmchg_slot] = scn_pgm_chg
+			if scn_pgm_chg >=0
+				LabelKnob 3, {PChg }, scn_pgm_chg
 			else
-			LabelKnob 3, {PChg }, {Off}
+				LabelKnob 3, {PChg }, {Off}
 			endif
 		endif
 	endif
@@ -2145,8 +1748,8 @@
 			chord_bank[chord_slot + dur_slot] = chrd_duration
 			dur_bars = Div chrd_duration, 4
 			dur_beats = (chrd_duration % HostBeatsPerMeasure) * (100/HostBeatsPerMeasure)
-		LabelKnob 0 , {Dur }, dur_bars, {.}, dur_beats
-	endif
+			LabelKnob 0 , {Dur }, dur_bars, {.}, dur_beats
+		endif
 	endif
 	if (mode = 3)
 		if LastKnob = 1
@@ -2157,15 +1760,15 @@
 		if LastKnob = 1
 			chrd_patt = Round TranslateScale (GetKnobValue 1), 0, 127, -1, 16
 			if chrd_patt <> chord_bank[chord_slot + patt_slot] 
-			chord_bank[chord_slot + patt_slot] = chrd_patt
-			if chrd_patt = 16
+				chord_bank[chord_slot + patt_slot] = chrd_patt
+				if chrd_patt = 16
 					LabelKnob 1, {CC21 RND}
-			elseif chrd_patt >= 0
+				elseif chrd_patt >= 0
 					LabelKnob 1, {CC21: }, chrd_patt+1
 				else
 					LabelKnob 1, {CC21 Off}
 				endif
-		endif
+			endif
 		endif
 	endif
 	if LastKnob = 2
@@ -2181,10 +1784,10 @@
 			chord_bank[chord_slot + bass_slot] = chrd_bass
 			if chrd_bass >= 0
 				LabelKnob 3, {Bass }, (NoteName chrd_bass)
-		else
-			LabelKnob 3, {Bass }, {Off}
+			else
+				LabelKnob 3, {Bass }, {Off}
+			endif
 		endif
-	endif
 	endif
 	//# Knob 1 not used in this set
 	chrd_to_label = current_chord+8
@@ -2196,46 +1799,46 @@
 	inv_updated = FALSE
 	if LastKnob = 0
 		slct_chord_root = Round TranslateScale (GetKnobValue 0), 0, 127, 0, 11
-	LabelKnob LastKnob, {Root }, (NoteName, slct_chord_root)
-	root_updated = TRUE
-	Call @SaveSelectedChordPad
+		LabelKnob LastKnob, {Root }, (NoteName, slct_chord_root)
+		root_updated = TRUE
+		Call @SaveSelectedChordPad
 	elseif LastKnob = 1
-	slct_chord_type = Round TranslateScale (GetKnobValue 1), 0, 127, 0, num_chord_types-1
-	if slct_chord_type = 0
-		LabelKnob, 1, {Major}
-	elseif slct_chord_type = 1
-		LabelKnob, 1, {Minor}
-	elseif slct_chord_type = 2
-		LabelKnob, 1, {Diminished}
-	elseif slct_chord_type = 3
-		LabelKnob, 1, {Augmented}
-	elseif slct_chord_type = 4
-		LabelKnob, 1, {Sus2}
-	elseif slct_chord_type = 5
-		LabelKnob, 1, {Sus4}
-	elseif slct_chord_type = 6
-		LabelKnob, 1, {Minor 6th}
-	elseif slct_chord_type = 7
-		LabelKnob, 1, {Major 6th}
-	elseif slct_chord_type = 8
-		LabelKnob, 1, {Minor 7th}
-	elseif slct_chord_type = 9
-		LabelKnob, 1, {Dom 7th}
-	elseif slct_chord_type = 10
-		LabelKnob, 1, {Major 7th}
-	endif
-	type_updated = TRUE
-	Call @SaveSelectedChordPad
+		slct_chord_type = Round TranslateScale (GetKnobValue 1), 0, 127, 0, num_chord_types-1
+		if slct_chord_type = 0
+			LabelKnob, 1, {Major}
+		elseif slct_chord_type = 1
+			LabelKnob, 1, {Minor}
+		elseif slct_chord_type = 2
+			LabelKnob, 1, {Diminished}
+		elseif slct_chord_type = 3
+			LabelKnob, 1, {Augmented}
+		elseif slct_chord_type = 4
+			LabelKnob, 1, {Sus2}
+		elseif slct_chord_type = 5
+			LabelKnob, 1, {Sus4}
+		elseif slct_chord_type = 6
+			LabelKnob, 1, {Minor 6th}
+		elseif slct_chord_type = 7
+			LabelKnob, 1, {Major 6th}
+		elseif slct_chord_type = 8
+			LabelKnob, 1, {Minor 7th}
+		elseif slct_chord_type = 9
+			LabelKnob, 1, {Dom 7th}
+		elseif slct_chord_type = 10
+			LabelKnob, 1, {Major 7th}
+		endif
+		type_updated = TRUE
+		Call @SaveSelectedChordPad
 	elseif LastKnob = 2
-	slct_chord_inversion = Round TranslateScale (GetKnobValue 2), 0, 127, -4, 4
+		slct_chord_inversion = Round TranslateScale (GetKnobValue 2), 0, 127, -4, 4
 		LabelKnob LastKnob, {Inv: }, slct_chord_inversion
 		inv_updated = TRUE
 		Call @SaveSelectedChordPad
 	else LastKnob = 3
 		slct_chord_bass_note = Round TranslateScale (GetKnobValue 3), 0, 127, -1, 11
-	LabelKnob LastKnob, {Bass }, (NoteName, slct_chord_bass_note)
-	bass_updated = TRUE
-	Call @SaveSelectedChordPad 
+		LabelKnob LastKnob, {Bass }, (NoteName, slct_chord_bass_note)
+		bass_updated = TRUE
+		Call @SaveSelectedChordPad 
 	endif
 @End
 
@@ -2307,34 +1910,34 @@
 @KnobChangeSet6
 	if LastKnob = 0
 		constructed_root = Round TranslateScale (GetKnobValue 0), 0, 127, 0, 11
-	LabelKnob 0, {Root }, (NoteName, constructed_root)
-	root_updated = TRUE
+		LabelKnob 0, {Root }, (NoteName, constructed_root)
+		root_updated = TRUE
 	elseif LastKnob = 1
-	constructed_3rd = Round TranslateScale (GetKnobValue 1), 0, 127, 0, 3
-	Call @LabelConstructed3rd
-	3rd_updated = TRUE
+		constructed_3rd = Round TranslateScale (GetKnobValue 1), 0, 127, 0, 3
+		Call @LabelConstructed3rd
+		3rd_updated = TRUE
 	elseif LastKnob = 2
-	constructed_5th = Round TranslateScale (GetKnobValue 2), 0, 127, 0, 2
+		constructed_5th = Round TranslateScale (GetKnobValue 2), 0, 127, 0, 2
 		Call @LabelConstructed5th 
 		5th_updated = TRUE
 	else LastKnob = 3
 		constructed_7th = Round TranslateScale (GetKnobValue 3), 0, 127, 0, 4
-	Call @LabelConstructed7th
-	7th_updated = TRUE 
+		Call @LabelConstructed7th
+		7th_updated = TRUE 
 	endif
 	Call @SaveConstructedChordPad
 @End
 
 @LabelConstructed3rd
-	if constructed_3rd = 0
-		LabelKnob, 1, {sus2}
-	elseif constructed_3rd = 1
-		LabelKnob, 1, {min3 (b3)}
-	elseif constructed_3rd = 2
-		LabelKnob, 1, {maj3}
-	elseif constructed_3rd = 3
-		LabelKnob, 1, {sus4}
-	endif
+		if constructed_3rd = 0
+			LabelKnob, 1, {sus2}
+		elseif constructed_3rd = 1
+			LabelKnob, 1, {min3 (b3)}
+		elseif constructed_3rd = 2
+			LabelKnob, 1, {maj3}
+		elseif constructed_3rd = 3
+			LabelKnob, 1, {sus4}
+		endif
 @End
 
 @LabelConstructed5th
@@ -2483,20 +2086,17 @@
 	//# xosd
 	if in_mode_select
 		in_mode_select = FALSE
-		if (mode>=4 and mode<=6)
-			//# stay in sequence mode
-			knobset = 10
-		elseif (mode >= 1)
+		LabelPads {Scene: }, current_scene+1, { Chord: }, current_chord+1
+		if (mode >= 1)
 			mode = 0
 			songmode = 1 //# exit to scene lock
-			pattmode = 1
 			knob_set = 1
-			LabelPads {Scene: }, current_scene+1, { Chord: }, current_chord+1
 		endif		
 		Call @SetupLayout
 	else
 		// #Mode selection for Knobs n Pads
 		in_mode_select = TRUE
+		LabelPads {SETTINGS:   (shift to exit)}
 		for i = 0 to (number_of_modes - 1)
 			ColorPad i, col_mode_select
 			LabelPad i, { } //# empty label to overwrite chord info
@@ -2526,15 +2126,15 @@
 				if (NOT HostRunning) or (HostRunning and allow_mode_chg_playbk)  
 					LabelPad i, {+CHORDS: Record}
 				endif
-			elseif i = 4
-				LatchPad i, NO
-				LabelPad i, { SEQUENCE    Setup}
-			elseif i = 5
-				LatchPad i, NO
-				LabelPad i, { SEQUENCE   Step Edit}
+			elseif (i>=4 and i<=5) or (i=14)
+				//# not in use
+				LatchPad i, No
+				LabelPad i, { }
 			elseif i = 6
 				LatchPad i, NO
-				LabelPad i, { SEQUENCE   Midi Gen}
+				if (NOT HostRunning) or (HostRunning and allow_mode_chg_playbk)
+					LabelPad i, {COPY/PASTE }
+				endif
 			elseif i = 7
 				LatchPad i, NO
 				if NOT HostRunning
@@ -2563,11 +2163,6 @@
 			elseif i = 13
 				LatchPad i, NO
 				Call @LabelChordNotesOutPad
-			elseif i = 14
-				LatchPad i, NO
-				if (NOT HostRunning) or (HostRunning and allow_mode_chg_playbk)
-					LabelPad i, {COPY/PASTE }
-				endif
 			elseif i = 15
 				LatchPad i, NO
 				if (NOT HostRunning) or (HostRunning and allow_mode_chg_playbk)
@@ -2575,23 +2170,7 @@
 				endif
 			endif
 		endfor
-		if mode=4
-			LabelPad 8, {SEQ1       CH-}, midi_channels_used[5]+1
-			LabelPad 9, {SEQ2       CH-}, midi_channels_used[6]+1
-			LabelPad 10, {SEQ3       CH-}, midi_channels_used[7]+1
-			LabelPad 11, {SEQ4       CH-}, midi_channels_used[8]+1
-			LabelPad 12, {EXIT SEQUENCING}
-			LabelPad 13, { }
-			LatchPad seq_ch+8, YES
-		elseif (mode>=5 and mode<=6)
-			LabelPad 8, {SEQ}, seq_ch+1, {-S}, current_scene+1, {P}, current_pattern+1, {         STEPS}
-			LabelPad 9, {SEQ}, seq_ch+1, {-S}, current_scene+1, {P}, current_pattern+1, {         NOTES}
-			LabelPad 10, {SEQ}, seq_ch+1, {-S}, current_scene+1, {P}, current_pattern+1, {          VELO}
-			LabelPad 11, {SEQ}, seq_ch+1, {-S}, current_scene+1, {P}, current_pattern+1, {             CC1}
-			LabelPad 12, {SEQ}, seq_ch+1, {-S}, current_scene+1, {P}, current_pattern+1, {             CC2}
-			LabelPad 13, {EXIT SEQUENCING}
-			LatchPad seq_type_to_edit+8, YES
-		elseif NOT HostRunning
+		if NOT HostRunning
 			LabelPad 8, { EXT MIDI  }, {   Key/Scale      }, (NoteName, selected_midi_in_root), { }, (ScaleName, allowed_scales[selected_midi_in_scale])
 		endif
 		LatchPad mode, YES
@@ -2607,15 +2186,15 @@
 	Log {List to sort }, sort_list[0], sort_list[1], sort_list[2], sort_list[3]
 	changed = 1
 	while (changed = 1)
-	changed = 0
-	for i = 0 to len_list - 2
+		changed = 0
+		for i = 0 to len_list - 2
 		if sort_list[i] > sort_list[i+1]
-			changed = 1
-		tmp = sort_list[i]
-		sort_list[i] = sort_list[i+1]
-		sort_list[i+1] = tmp
-		endif
-	endfor
+				changed = 1
+				tmp = sort_list[i]
+				sort_list[i] = sort_list[i+1]
+				sort_list[i+1] = tmp
+			endif
+		endfor
 	endwhile
 	Log {Sorted List: }, sort_list[0], sort_list[1], sort_list[2], sort_list[3]
 @End
@@ -2659,9 +2238,9 @@
 	
 	Call @ReorderNoteLabelsForInversion
 	if cn4 >= 0 //# A tetrad witha a note i cn4 
-		LabelPad, chrd_to_label, {[}, cd_bars, {.}, lc_beats, { bars]}, { Inversion:}, 	ci, { BassNote: }, (NoteName, cb), {  }, (NoteName, inc[0]), (NoteName, inc[1]+sta), (NoteName, inc[2]+sta), (NoteName, inc[3]+sta)  
+		LabelPad, chrd_to_label, {[}, cd_bars, {.}, lc_beats, { bars]}, { Inv:}, 	ci, {     Root:}, (NoteName, cn1), {     Bass:}, (NoteName, cb), {      }, (NoteName, inc[0]), (NoteName, inc[1]+sta), (NoteName, inc[2]+sta), (NoteName, inc[3]+sta)  
 	else
-		LabelPad, chrd_to_label, {[}, cd_bars, {.}, lc_beats, { bars]}, { Inversion:}, 	ci, { BassNote: }, (NoteName, cb), {  }, (NoteName, inc[0]+sta), (NoteName, inc[1]+sta), (NoteName, inc[2]+sta)
+		LabelPad, chrd_to_label, {[}, cd_bars, {.}, lc_beats, { bars]}, { Inv:}, 	ci, {     Root:}, (NoteName, cn1), {     Bass:}, (NoteName, cb), {      }, (NoteName, inc[0]+sta), (NoteName, inc[1]+sta), (NoteName, inc[2]+sta)
 	endif
 @End
 
@@ -2706,15 +2285,14 @@
 @SetupLayout
 	//#xsl setup layout pads
 	if in_mode_select
-	Exit
+		Exit
 	else
 		//# Setup scene pads
-		if (mode <> 5) or (mode <>6) //# sequence edit modes 
-			for i = 0 to 7  
+		for i = 0 to 7  
 			if scene_bank[i * sc_size] > 0
 				ColorPad i, col_scene
-					scn_to_label = i
-					Call @LabelScenePad
+				scn_to_label = i
+				Call @LabelScenePad
 			else
 				ColorPad i, col_unused
 				LabelPad i, { }
@@ -2723,11 +2301,9 @@
 			if (scene_bank[i * sc_size] > 0) and (mode = 15) and NOT in_mode_select
 				ColorPad i, col_del_chord
 			endif
-			endfor
-		endif		  
+		endfor		  
 		//# Setup chord pads  
-		if (mode<4 or mode>6)
-			for i = 8 to 15
+		for i = 8 to 15
 			chord_slot = (current_scene * 100) + ((i-8) * 10)
 			LatchPad i, NO
 			if chord_bank[chord_slot + dur_slot] > 0
@@ -2740,87 +2316,38 @@
 			endif
 			if (mode = 3)
 				ColorPad i, col_rec_chord
-				elseif (mode = 15) and (chord_bank[chord_slot] > 0)
+			elseif (mode = 15) and (chord_bank[chord_slot] > 0)
 				ColorPad i, col_del_chord
-				endif
-			endfor
-		//# Sequence setup mode
-		elseif (mode=4) //# setup pattern durations for each scene
-			for i = 8 to 15
-				pattern_slot = (seq_ch * 64)+(current_scene * 8) + (i-8)
-			LatchPad i, NO
-			if patt_durs[pattern_slot] > 0
-				ColorPad i, col_pattern
-				seq_pad = i
-					Call @LabelSequencePad
-			else
-				ColorPad i, col_unused
-				LabelPad i, { }
 			endif
-			endfor
-		elseif (mode=5 or mode=6)
-			for i = 0 to 15
-				ColorPad i, 4
-				seq_pad = i
-				Call @LabelSequencePad
-			endfor
-		endif
-		if not in_seq_mode
-			//# Handle current scene and chord colors
-			if (songmode = 0) //# Playthru no lock
+		endfor
+		//# Handle current scene and chord colors
+		if (songmode = 0) //# Playthru no lock
 			ColorPad current_scene, col_sel_scene
 			ColorPad current_chord+8, col_sel_chord
-			elseif (songmode = 1) //# Lock to scene
-			ColorPad current_scene, loop_col
+		elseif (songmode = 1) //# Lock to scene
 			ColorPad current_chord+8, col_sel_chord
 			LatchPad current_scene, YES
-			elseif (songmode = 2)
-			ColorPad current_scene, loop_col
-			ColorPad current_chord+8, loop_col
-			elseif (mode = 3) //# REC CHORDS 
-				ColorPad current_scene, loop_col //# Locked playback doesnt change
-				if rec_chord_note_count = 0
-					LabelPad current_chord+8, {... waiting}
-				endif
-				Log {REC CHORDS}
-			endif
-			if (mode >= 1)
+		elseif (songmode = 2)
 			LatchPad current_scene, YES
-				if (mode =4)
-				LatchPad current_pattern+8, YES
-				elseif (mode=5 or mode=6)
-				LatchPad current_step, YES
-				else
-				LatchPad current_chord+8, YES
-				endif
+			LatchPad current_chord+8, YES
+		elseif (mode = 3) //# REC CHORDS 
+			ColorPad current_scene, loop_col //# Locked playback doesnt change
+			if rec_chord_note_count = 0
+				LabelPad current_chord+8, {... waiting}
 			endif
-			//# Handle pending chord and scene changes in playback
-			if HostRunning and (songmode <=2)
+			Log {REC CHORDS}
+		endif
+		if (mode >= 1)
+			LatchPad current_scene, YES
+			LatchPad current_chord+8, YES
+		endif
+		//# Handle pending chord and scene changes in playback
+		if HostRunning and (songmode <=2)
 			if chord_change_requested >= 0
 				ColorPad chord_change_requested+8, col_pending
 			endif
 			if scene_change_requested >= 0
 				ColorPad scene_change_requested, col_pending
-			endif
-			endif
-		elseif (in_seq_mode)
-			if mode=4
-				if (pattmode = 0) //# Playthru no lock
-				ColorPad current_scene, col_sel_scene
-				ColorPad current_pattern+8, col_sel_pattern
-				elseif (pattmode = 1) //# Lock to scene
-				ColorPad current_scene, loop_col
-				ColorPad current_pattern+8, col_sel_pattern
-				LatchPad current_scene, YES
-				elseif (pattmode = 2)
-				ColorPad current_scene, loop_col
-				ColorPad current_pattern+8, loop_col
-				endif
-				if HostRunning and (pattern_change_requested >= 0)
-				ColorPad pattern_change_requested+8, col_pattern_pending
-			endif
-			elseif (mode=5 or mode=6)
-				LatchPad current_step, YES
 			endif
 		endif
 	endif
@@ -2834,39 +2361,39 @@
 	FillArray txpose_labels, 99, 13 
 	txpose_index = 0
 	for i = 6 to 11
-	key = (i * 7) % 12
-	txpose_val = key
-	if key > Abs (key - 12)
-		txpose_val = key - 12 
-	endif
-	//# Log {APos: }, i, { Key: }, (NoteName key), { TXPOSE: }, txpose_val, { Semitones: }, key, { -VE: }, key -12
-	txpose_array[txpose_index] = txpose_val
-	label = txpose_array[txpose_index]
-	if txpose_array[txpose_index] < 0
-		label = txpose_array[txpose_index] + 12
-	endif
-	txpose_labels[txpose_index] = label
-	txpose_index = txpose_index + 1 
+		key = (i * 7) % 12
+		txpose_val = key
+		if key > Abs (key - 12)
+			txpose_val = key - 12 
+		endif
+		//# Log {APos: }, i, { Key: }, (NoteName key), { TXPOSE: }, txpose_val, { Semitones: }, key, { -VE: }, key -12
+		txpose_array[txpose_index] = txpose_val
+		label = txpose_array[txpose_index]
+		if txpose_array[txpose_index] < 0
+			label = txpose_array[txpose_index] + 12
+		endif
+		txpose_labels[txpose_index] = label
+		txpose_index = txpose_index + 1 
 	endfor  
 	for i = 0 to 6
-	key = (i * 7) % 12
-	txpose_val = key
-	if key > Abs (key - 12)
-		txpose_val = key - 12 
-	endif
-	//# Log {BPos: }, i, { Key: }, (NoteName key), { TXPOSE: }, txpose_val, { Semitones: }, key, { -VE: }, key -12 
-	txpose_array[txpose_index] = txpose_val
-	label = txpose_array[txpose_index]
-	if txpose_array[txpose_index] < 0
-		label = txpose_array[txpose_index] + 12
-	endif
-	txpose_labels[txpose_index] = label
-	txpose_index = txpose_index + 1
+		key = (i * 7) % 12
+		txpose_val = key
+		if key > Abs (key - 12)
+			txpose_val = key - 12 
+		endif
+		//# Log {BPos: }, i, { Key: }, (NoteName key), { TXPOSE: }, txpose_val, { Semitones: }, key, { -VE: }, key -12 
+		txpose_array[txpose_index] = txpose_val
+		label = txpose_array[txpose_index]
+		if txpose_array[txpose_index] < 0
+			label = txpose_array[txpose_index] + 12
+		endif
+		txpose_labels[txpose_index] = label
+		txpose_index = txpose_index + 1
 	endfor
 	
 	//# Log {Txpose vals and Labels}
 	//#for a = 0 to 12
-	//# Log (NoteName txpose_labels[a]) , { val: }, txpose_array[a]
+		//# Log (NoteName txpose_labels[a]) , { val: }, txpose_array[a]
 	//#endfor
 @End
 
@@ -2902,7 +2429,7 @@
 	//# prog_invs are applied at NoteOut. No effect on how notes stored here
 				
 	if scn_preset = 1
-	scene_bank[current_scene * sc_size] = [4,6,scn_preset,0,0,0,0,0,0,0,0,-1]
+		scene_bank[current_scene * sc_size] = [4,6,scn_preset,0,0,0,0,0,0,0,0,-1]
 		chord_bank[(current_scene * 100) + 0] = [60,64,67,-1,4,0,-1]
 		chord_bank[(current_scene * 100) + 10] = [-1,-1,-1,-1,0,0,-1]
 		chord_bank[(current_scene * 100) + 20] = [-1,-1,-1,-1,0,0,-1]
@@ -2921,42 +2448,42 @@
 		prog_bass = [1,5,6,4,0,0,0,0]
 		prog_invs = [0,-1,-1,-1,0,0,0,0]
 		Call @HandleChordBankPresetUpdate
-	LabelPads {Classic I-V-vi-IV progression in C Major}
+		LabelPads {Classic I-V-vi-IV progression in C Major}
 	elseif scn_preset = 3
 		psn = [0, 60, 62, 64, 65, 67, 69, 71, 72]
 		prog_invs = [0,0,0,0,0,0,0,4]
 		Call @HandleChordBankPresetUpdate
-	LabelPads {C IONIAN Major diatonic chord set}
+		LabelPads {C IONIAN Major diatonic chord set}
 	elseif scn_preset = 4
 		psn = [0, 62, 64, 65, 67, 69, 71, 72, 74]
 		prog_invs = [0,0,0,0,0,0,3,4]
 		Call @HandleChordBankPresetUpdate
-	LabelPads {D DORIAN diatonic chord set}
+		LabelPads {D DORIAN diatonic chord set}
 	elseif scn_preset = 5
 		psn = [0, 64, 65, 67, 69, 71, 72, 74, 76]
 		prog_invs = [0,0,0,0,0,3,3,4]
 		Call @HandleChordBankPresetUpdate
-	LabelPads {E PHRYGIAN diatonic chord set}
+		LabelPads {E PHRYGIAN diatonic chord set}
 	elseif scn_preset = 6
 		psn = [0, 65, 67, 69, 71, 72, 74, 76, 77]
 		prog_invs = [0,0,0,0,3,3,3,4]
 		Call @HandleChordBankPresetUpdate
-	LabelPads {F LYDIAN diatonic chord set}
+		LabelPads {F LYDIAN diatonic chord set}
 	elseif scn_preset = 7
 		psn = [0, 67, 69, 71, 72, 74, 76, 77, 79]
 		prog_invs = [0,0,0,3,3,3,3,4]
 		Call @HandleChordBankPresetUpdate
-	LabelPads {G MIXOLYDIAN diatonic chord set}
+		LabelPads {G MIXOLYDIAN diatonic chord set}
 	elseif scn_preset = 8
 		psn = [0, 69, 71, 72, 74, 76, 77, 79, 81]
 		prog_invs = [0,0,3,3,3,3,3,4]
 		Call @HandleChordBankPresetUpdate
-	LabelPads {A AEOLIAN Natural Minor diatonic chord set}
+		LabelPads {A AEOLIAN Natural Minor diatonic chord set}
 	elseif scn_preset = 9
 		psn = [0, 71, 72, 74, 76, 77, 79, 81, 83]
 		prog_invs = [0,3,3,3,3,3,3,4]
 		Call @HandleChordBankPresetUpdate
-	LabelPads {B LOCRIAN diatonic chord set}
+		LabelPads {B LOCRIAN diatonic chord set}
 	elseif scn_preset = 10
 		scene_bank[current_scene * sc_size] = [4,6,10,0,0,0,0,0,0,0,0,-1]
 		chord_bank[(current_scene * 100) + 0] = [9,12,16,-1,4,0,69]
